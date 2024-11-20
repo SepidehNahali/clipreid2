@@ -191,137 +191,55 @@ def load_clip_to_cpu(backbone_name, h_resolution, w_resolution, vision_stride_si
 
     return model
 
-# class PromptLearner(nn.Module):
-#     def __init__(self, num_class, dataset_name, dtype, token_embedding):
-#         super().__init__()
-#         if dataset_name == "VehicleID" or dataset_name == "veri":
-#             ctx_init = "A photo of a X X X X vehicle."
-#         else:
-#             ctx_init = "A photo of a X X X X person."
-
-#         ctx_dim = 512
-#         # use given words to initialize context vectors
-#         ctx_init = ctx_init.replace("_", " ")
-#         n_ctx = 4
-
-#         tokenized_prompts = clip.tokenize(ctx_init).cuda() 
-#         with torch.no_grad():
-#             embedding = token_embedding(tokenized_prompts).type(dtype) 
-#         self.tokenized_prompts = tokenized_prompts  # torch.Tensor
-
-#         n_cls_ctx = 4
-#         cls_vectors = torch.empty(num_class, n_cls_ctx, ctx_dim, dtype=dtype) 
-#         nn.init.normal_(cls_vectors, std=0.02)
-#         self.cls_ctx = nn.Parameter(cls_vectors) 
-
-
-#         # These token vectors will be saved when in save_model(),
-#         # but they should be ignored in load_model() as we want to use
-#         # those computed using the current class names
-#         self.register_buffer("token_prefix", embedding[:, :n_ctx + 1, :])  
-#         self.register_buffer("token_suffix", embedding[:, n_ctx + 1 + n_cls_ctx: , :]) 
-#         self.num_class = num_class
-#         self.n_cls_ctx = n_cls_ctx
-
-#     def forward(self, label):
-#         cls_ctx = self.cls_ctx[label] 
-#         b = label.shape[0]
-#         prefix = self.token_prefix.expand(b, -1, -1) 
-#         suffix = self.token_suffix.expand(b, -1, -1) 
-#         prompts = torch.cat(
-#             [
-#                 prefix,  # (n_cls, 1, dim)
-#                 cls_ctx,     # (n_cls, n_ctx, dim)
-#                 suffix,  # (n_cls, *, dim)
-#             ],
-#             dim=1,
-#         ) 
-#         # print(f"suffix shape: {suffix.shape}")
-#         # print(f"prompts shape: {prompts.shape}")
-#         # print(f"prefix shape: {prefix.shape}")
-#         # print(f"cls_ctx shape: {cls_ctx.shape}")
-
-#         return prompts 
-
-
 class PromptLearner(nn.Module):
-    def __init__(self, num_class, dataset_name, dtype, token_embedding):
-        super().__init__()
+def __init__(self, num_class, dataset_name, dtype, token_embedding):
+    super().__init__()
 
-        # Define these parameters with appropriate values
-        self.n_ctx_1 = 4  # Number of tokens for the first context (X X X X car)
-        self.n_ctx_2 = 4  # Number of tokens for the second context (type X X X X)
-        self.n_cls_ctx = self.n_ctx_1 + self.n_ctx_2  # Total tokens for class learnable context
+    if dataset_name == "VehicleID" or dataset_name == "veri":
+        ctx_init = "X X X X" 
+    else:
+        ctx_init = "A photo of a X X X X person."
 
-        # Updated context initialization
-        if dataset_name == "VehicleID" or dataset_name == "veri":
-            ctx_init = "A photo of a X X X X car, with type X X X X."
-        else:
-            ctx_init = "A photo of a X X X X person."
+    ctx_dim = 512
+    # Use given words to initialize context vectors
+    ctx_init = ctx_init.replace("_", " ")
+    n_ctx = 4
+    
+    tokenized_prompts = clip.tokenize(ctx_init).cuda() 
+    with torch.no_grad():
+        embedding = token_embedding(tokenized_prompts).type(dtype)
+    
+    self.tokenized_prompts = tokenized_prompts  # torch.Tensor
 
-        ctx_dim = 512
-        # Tokenize and initialize context vectors
-        ctx_init = ctx_init.replace("_", " ")
-        tokenized_prompts = clip.tokenize(ctx_init).cuda() 
-        with torch.no_grad():
-            embedding = token_embedding(tokenized_prompts).type(dtype) 
-        self.tokenized_prompts = tokenized_prompts  # torch.Tensor
+    n_cls_ctx = 4
+    cls_vectors = torch.empty(num_class, n_cls_ctx, ctx_dim, dtype=dtype) 
+    nn.init.normal_(cls_vectors, std=0.02)
+    self.cls_ctx = nn.Parameter(cls_vectors)
 
-        # Define indices for the prefix and suffixes
-        prefix_end = 4  # Corresponds to "A photo of a"
-        suffix_start = prefix_end + self.n_ctx_1
-        suffix_end = suffix_start + 3  # Corresponds to "with type"
+    # Set the prefix and suffix to empty (no tokens)
+    self.register_buffer("token_prefix", torch.zeros_like(embedding[:, :0, :]))  # Empty prefix
+    self.register_buffer("token_suffix", torch.zeros_like(embedding[:, -1:, :]))  # Empty suffix
+    
+    self.num_class = num_class
+    self.n_cls_ctx = n_cls_ctx
 
-        # Register fixed parts of the prompt
-        self.register_buffer("prefix", embedding[:, :prefix_end, :])
-        self.register_buffer("suffix", embedding[:, suffix_start:suffix_end, :])
-        self.register_buffer("final_suffix", embedding[:, -1:, :])  # Final period "."
+def forward(self, label):
+    # Get class-specific context
+    cls_ctx = self.cls_ctx[label]  
+    b = label.shape[0]
+    
+    # Use the empty prefix and suffix
+    prefix = self.token_prefix.expand(b, -1, -1)  
+    suffix = self.token_suffix.expand(b, -1, -1)  
+    
+    # Concatenate the prefix (empty), cls_ctx, and suffix (empty)
+    prompts = torch.cat([prefix, cls_ctx, suffix], dim=1) 
 
-        # Initialize learnable class context vectors
-        cls_vectors = torch.empty(num_class, self.n_cls_ctx, ctx_dim, dtype=dtype)
-        nn.init.normal_(cls_vectors, std=0.02)
-        self.cls_ctx = nn.Parameter(cls_vectors)
+    # Ensure that the prompt length is 77 (or any other required length)
+    pad_length = 77 - prompts.size(1)
+    if pad_length > 0:
+        padding = torch.zeros((prompts.size(0), pad_length, prompts.size(2)), dtype=prompts.dtype).cuda()
+        prompts = torch.cat([prompts, padding], dim=1)
 
-        # Store the number of classes
-        self.num_class = num_class
-        self.n_cls_ctx = self.n_cls_ctx
-
-    # Forward method
-    def forward(self, label):
-        # Retrieve the class-specific learnable tokens
-        cls_ctx = self.cls_ctx[label]  # (Batch, n_cls_ctx, dim)
-        b = label.shape[0]
-
-        # Fixed prefix and suffix segments
-        ctx_vectors_1 = self.prefix.expand(b, -1, -1)  # "A photo of a"
-        ctx_vectors_2 = self.suffix.expand(b, -1, -1)  # "with type"
-        ctx_vectors_3 = self.final_suffix.expand(b, -1, -1)  # "."
-
-        # Split class learnable tokens for each context
-        learnable_tokens_1 = cls_ctx[:, :self.n_ctx_1]  # First learnable context tokens (X X X X car)
-        learnable_tokens_2 = cls_ctx[:, self.n_ctx_1:self.n_ctx_1 + self.n_ctx_2]  # Second learnable context tokens (X X X X)
-
-        # Concatenate all components to form the complete prompt
-        prompts = torch.cat(
-            [
-                ctx_vectors_1,  # "A photo of a"
-                learnable_tokens_1,  # X X X X car
-                ctx_vectors_2,  # "with type"
-                learnable_tokens_2,  # X X X X
-                ctx_vectors_3,  # "."
-            ],
-            dim=1,
-        )
-        pad_length = 77 - prompts.size(1)
-        if pad_length > 0:
-            padding = torch.zeros((prompts.size(0), pad_length, prompts.size(2)), dtype=prompts.dtype).cuda()
-            prompts = torch.cat([prompts, padding], dim=1)
-
-        # print(f"Prefix shape: {ctx_vectors_1.shape}")
-        # print(f"Cls_ctx shape: {cls_ctx.shape}")
-        # print(f"Suffix1 shape: {ctx_vectors_2.shape}")
-        # print(f"Suffix2 shape: {ctx_vectors_3.shape}")
-        # print(f"Prompts shape: {prompts.shape}")
-
-        return prompts
+    return prompts
 
