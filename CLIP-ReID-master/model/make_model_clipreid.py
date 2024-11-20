@@ -192,54 +192,54 @@ def load_clip_to_cpu(backbone_name, h_resolution, w_resolution, vision_stride_si
     return model
 
 class PromptLearner(nn.Module):
-def __init__(self, num_class, dataset_name, dtype, token_embedding):
-    super().__init__()
-
-    if dataset_name == "VehicleID" or dataset_name == "veri":
-        ctx_init = "X X X X" 
-    else:
-        ctx_init = "A photo of a X X X X person."
-
-    ctx_dim = 512
-    # Use given words to initialize context vectors
-    ctx_init = ctx_init.replace("_", " ")
-    n_ctx = 4
+    def __init__(self, num_class, dataset_name, dtype, token_embedding):
+        super().__init__()
     
-    tokenized_prompts = clip.tokenize(ctx_init).cuda() 
-    with torch.no_grad():
-        embedding = token_embedding(tokenized_prompts).type(dtype)
+        if dataset_name == "VehicleID" or dataset_name == "veri":
+            ctx_init = "X X X X" 
+        else:
+            ctx_init = "A photo of a X X X X person."
     
-    self.tokenized_prompts = tokenized_prompts  # torch.Tensor
-
-    n_cls_ctx = 4
-    cls_vectors = torch.empty(num_class, n_cls_ctx, ctx_dim, dtype=dtype) 
-    nn.init.normal_(cls_vectors, std=0.02)
-    self.cls_ctx = nn.Parameter(cls_vectors)
-
-    # Set the prefix and suffix to empty (no tokens)
-    self.register_buffer("token_prefix", torch.zeros_like(embedding[:, :0, :]))  # Empty prefix
-    self.register_buffer("token_suffix", torch.zeros_like(embedding[:, -1:, :]))  # Empty suffix
+        ctx_dim = 512
+        # Use given words to initialize context vectors
+        ctx_init = ctx_init.replace("_", " ")
+        n_ctx = 4
+        
+        tokenized_prompts = clip.tokenize(ctx_init).cuda() 
+        with torch.no_grad():
+            embedding = token_embedding(tokenized_prompts).type(dtype)
+        
+        self.tokenized_prompts = tokenized_prompts  # torch.Tensor
     
-    self.num_class = num_class
-    self.n_cls_ctx = n_cls_ctx
-
-def forward(self, label):
-    # Get class-specific context
-    cls_ctx = self.cls_ctx[label]  
-    b = label.shape[0]
+        n_cls_ctx = 4
+        cls_vectors = torch.empty(num_class, n_cls_ctx, ctx_dim, dtype=dtype) 
+        nn.init.normal_(cls_vectors, std=0.02)
+        self.cls_ctx = nn.Parameter(cls_vectors)
     
-    # Use the empty prefix and suffix
-    prefix = self.token_prefix.expand(b, -1, -1)  
-    suffix = self.token_suffix.expand(b, -1, -1)  
+        # Set the prefix and suffix to empty (no tokens)
+        self.register_buffer("token_prefix", torch.zeros_like(embedding[:, :0, :]))  # Empty prefix
+        self.register_buffer("token_suffix", torch.zeros_like(embedding[:, -1:, :]))  # Empty suffix
+        
+        self.num_class = num_class
+        self.n_cls_ctx = n_cls_ctx
     
-    # Concatenate the prefix (empty), cls_ctx, and suffix (empty)
-    prompts = torch.cat([prefix, cls_ctx, suffix], dim=1) 
-
-    # Ensure that the prompt length is 77 (or any other required length)
-    pad_length = 77 - prompts.size(1)
-    if pad_length > 0:
-        padding = torch.zeros((prompts.size(0), pad_length, prompts.size(2)), dtype=prompts.dtype).cuda()
-        prompts = torch.cat([prompts, padding], dim=1)
-
-    return prompts
+    def forward(self, label):
+        # Get class-specific context
+        cls_ctx = self.cls_ctx[label]  
+        b = label.shape[0]
+        
+        # Use the empty prefix and suffix
+        prefix = self.token_prefix.expand(b, -1, -1)  
+        suffix = self.token_suffix.expand(b, -1, -1)  
+        
+        # Concatenate the prefix (empty), cls_ctx, and suffix (empty)
+        prompts = torch.cat([prefix, cls_ctx, suffix], dim=1) 
+    
+        # Ensure that the prompt length is 77 (or any other required length)
+        pad_length = 77 - prompts.size(1)
+        if pad_length > 0:
+            padding = torch.zeros((prompts.size(0), pad_length, prompts.size(2)), dtype=prompts.dtype).cuda()
+            prompts = torch.cat([prompts, padding], dim=1)
+    
+        return prompts
 
